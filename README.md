@@ -1,4 +1,4 @@
-YouTube Search Server
+# YouTube Search Server
 
 This HTTP server communicates with the [YouTube Data API](https://developers.google.com/youtube/v3)
 to fetch information related to which playlists a particular playlist belongs to.

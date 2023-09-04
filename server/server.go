@@ -22,12 +22,15 @@ func (server *Server) GetHome(w http.ResponseWriter, req *http.Request) {
 }
 
 func (server *Server) GetMetadata(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Content-Type", "application/json")
+
 	log.Printf("Received %s request on %s\n", req.Method, req.URL)
 
 	idOrUrl := req.URL.Query().Get("idorurl")
 	if idOrUrl == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "application/json")
 		resp := make(map[string]string)
 		resp["message"] = "Bad Request. Query parameter 'idorurl' missing."
 		jsonResp, err := json.Marshal(resp)
@@ -41,7 +44,6 @@ func (server *Server) GetMetadata(w http.ResponseWriter, req *http.Request) {
 	metadata, err := server.youtube.GetVideoMetadata(idOrUrl)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Header().Set("Content-Type", "application/json")
 		resp := make(map[string]string)
 		resp["message"] = fmt.Sprintf("Error while fetching video metadata: %s", err)
 		jsonResp, err := json.Marshal(resp)
@@ -52,7 +54,6 @@ func (server *Server) GetMetadata(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
 	jsonResp, err := json.Marshal(metadata)
 	if err != nil {
 		log.Fatal("Error parsing JSON.\n")

@@ -28,7 +28,7 @@ func main() {
 	router.StrictSlash(true)
 
 	router.HandleFunc("/", server.GetHome).Methods("GET")
-	router.HandleFunc("/metadata/", server.GetMetadata).Methods("GET")
+	router.HandleFunc("/metadata/", server.GetMetadata).Methods("GET", "OPTIONS")
 
 	serveUrl := os.Getenv("SERVER_HOST") + ":" + os.Getenv("SERVER_PORT")
 
