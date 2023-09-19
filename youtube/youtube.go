@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/exp/slices"
 )
 
 const BaseUrl = "https://www.googleapis.com/youtube/v3/"
@@ -20,7 +23,7 @@ type VideoMetadata struct {
 	VideoTitle       string
 	VideoThumbnail   string
 	ViewCount        string
-	PublishDate      string
+	PublishedAt      string
 	ChannelTitle     string
 	ChannelId        string
 	ChannelThumbnail string
@@ -130,17 +133,12 @@ func (youtube *YouTube) GetVideoMetadata(idOrUrl string) (*VideoMetadata, error)
 		)
 	}
 
-	publishDate, ok := snippet["publishedAt"].(string)
+	publishedAt, ok := snippet["publishedAt"].(string)
 	if !ok {
 		return nil, fmt.Errorf(
 			"error in YouTube Data API response from %s. Key 'publishedAt' not found in items[0]['snippet']",
 			url.String(),
 		)
-	}
-
-	t, err := time.Parse(time.RFC3339, publishDate)
-	if err == nil {
-		publishDate = t.Format("2006-01-02")
 	}
 
 	title, ok := snippet["title"].(string)
@@ -329,7 +327,7 @@ func (youtube *YouTube) GetVideoMetadata(idOrUrl string) (*VideoMetadata, error)
 		VideoTitle:       title,
 		VideoThumbnail:   thumbnailUrl,
 		ViewCount:        viewCount,
-		PublishDate:      publishDate,
+		PublishedAt:      publishedAt,
 		ChannelId:        channelId,
 		ChannelTitle:     channelTitle,
 		ChannelThumbnail: channelThumbnailUrl,
@@ -340,9 +338,10 @@ func (youtube *YouTube) GetVideoMetadata(idOrUrl string) (*VideoMetadata, error)
 }
 
 func (youtube *YouTube) GetChannelVideos(
-	channelId string, videoId string, pageToken string, loadPrev bool,
+	channelId string, videoId string, publishedAt string, loadPrev bool,
 ) (*VideoList, error) {
 	const endpoint = "search/"
+	const numResults = 10
 
 	requestUrl, err := url.Parse(BaseUrl + endpoint)
 	if err != nil {
@@ -352,17 +351,13 @@ func (youtube *YouTube) GetChannelVideos(
 	q := requestUrl.Query()
 	q.Set("key", youtube.apiKey)
 	q.Set("channelId", channelId)
-	q.Set("maxResults", "10")
+	q.Set("maxResults", strconv.Itoa(numResults))
 	q.Set("type", "video")
 	q.Set("order", "date")
-	if pageToken == "" {
-		pageToken, err = findPageToken(videoId, channelId, youtube.apiKey)
-		if err != nil {
-			return nil, err
-		}
-		if pageToken != "" {
-			q.Set("pageToken", pageToken)
-		}
+	if loadPrev {
+		q.Set("publishedBefore", publishedAt)
+	} else {
+		q.Set("publishedAfter", publishedAt)
 	}
 	requestUrl.RawQuery = q.Encode()
 
@@ -385,321 +380,86 @@ func (youtube *YouTube) GetChannelVideos(
 
 	res.Body.Close()
 
-	result := []*VideoMetadata{}
-
-	if loadPrev {
-		items, ok := body["items"].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf(
-				"error in YouTube Data API response from %s. Key 'items' not found",
-				requestUrl.String(),
-			)
-		}
-		if len(items) == 0 {
-			return nil, fmt.Errorf(
-				"no videos found for channel with channel id %s",
-				channelId,
-			)
-		}
-
-		appendFlag := false
-
-		result := []*VideoMetadata{}
-
-		for i := 0; i < len(items); i++ {
-			item, ok := items[i].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			id, ok := item["id"].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['id']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			video, ok := id["videoId"].(string)
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['videoId']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			if appendFlag {
-				videoMetadata, err := youtube.GetVideoMetadata(video)
-				if err != nil {
-					return nil, fmt.Errorf(
-						"error in finding metadata for video %s",
-						video,
-					)
-				}
-				result = append(result, videoMetadata)
-			}
-
-			if video == videoId {
-				appendFlag = true
-			}
-		}
-
-		nextPageToken, nextPageExists := body["nextPageToken"].(string)
-		if !nextPageExists {
-			return &VideoList{
-				Count:  len(result),
-				Videos: result,
-			}, nil
-		}
-
-		q := requestUrl.Query()
-		q.Set("key", youtube.apiKey)
-		q.Set("channelId", channelId)
-		q.Set("maxResults", "10")
-		q.Set("type", "video")
-		q.Set("order", "date")
-		q.Set("pageToken", nextPageToken)
-
-		requestUrl.RawQuery = q.Encode()
-
-		res, err = http.Get(requestUrl.String())
-		if err != nil {
-			return nil, err
-		}
-
-		if res.StatusCode != 200 {
-			return nil, fmt.Errorf(
-				"call to YouTube API endpoint %s failed with message %s",
-				endpoint,
-				res.Status,
-			)
-		}
-
-		body = make(map[string]interface{})
-
-		json.NewDecoder(res.Body).Decode(&body)
-
-		res.Body.Close()
-
-		items, ok = body["items"].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf(
-				"error in YouTube Data API response from %s. Key 'items' not found",
-				requestUrl.String(),
-			)
-		}
-		if len(items) == 0 {
-			return nil, fmt.Errorf(
-				"no videos found for channel with channel id %s",
-				channelId,
-			)
-		}
-
-		for i := 0; i < len(items); i++ {
-			if len(result) == 10 {
-				break
-			}
-
-			item, ok := items[i].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			id, ok := item["id"].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['id']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			video, ok := id["videoId"].(string)
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['videoId']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			videoMetadata, err := youtube.GetVideoMetadata(video)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error in finding metadata for video %s",
-					video,
-				)
-			}
-			result = append(result, videoMetadata)
-		}
-		return &VideoList{
-			Count:  len(result),
-			Videos: result,
-		}, nil
-	} else {
-		items, ok := body["items"].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf(
-				"error in YouTube Data API response from %s. Key 'items' not found",
-				requestUrl.String(),
-			)
-		}
-		if len(items) == 0 {
-			return nil, fmt.Errorf(
-				"no videos found for channel with channel id %s",
-				channelId,
-			)
-		}
-
-		for i := 0; i < len(items); i++ {
-			item, ok := items[i].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			id, ok := item["id"].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['id']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			video, ok := id["videoId"].(string)
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['videoId']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			if video == videoId {
-				break
-			}
-
-			videoMetadata, err := youtube.GetVideoMetadata(video)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error in finding metadata for video %s",
-					video,
-				)
-			}
-			result = append(result, videoMetadata)
-		}
-
-		// fetching older videos
-		previousPageToken, previousPageExists := body["prevPageToken"].(string)
-		if !previousPageExists {
-			return &VideoList{
-				Count:  len(result),
-				Videos: result,
-			}, nil
-		}
-
-		q := requestUrl.Query()
-		q.Set("key", youtube.apiKey)
-		q.Set("channelId", channelId)
-		q.Set("maxResults", "10")
-		q.Set("type", "video")
-		q.Set("order", "date")
-		q.Set("pageToken", previousPageToken)
-
-		requestUrl.RawQuery = q.Encode()
-
-		res, err = http.Get(requestUrl.String())
-		if err != nil {
-			return nil, err
-		}
-
-		if res.StatusCode != 200 {
-			return nil, fmt.Errorf(
-				"call to YouTube API endpoint %s failed with message %s",
-				endpoint,
-				res.Status,
-			)
-		}
-
-		body = make(map[string]interface{})
-
-		json.NewDecoder(res.Body).Decode(&body)
-
-		res.Body.Close()
-
-		items, ok = body["items"].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf(
-				"error in YouTube Data API response from %s. Key 'items' not found",
-				requestUrl.String(),
-			)
-		}
-		if len(items) == 0 {
-			return nil, fmt.Errorf(
-				"no videos found for channel with channel id %s",
-				channelId,
-			)
-		}
-
-		for i := len(items) - 1; i >= 0; i-- {
-			if len(result) == 10 {
-				break
-			}
-
-			item, ok := items[i].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			id, ok := item["id"].(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['id']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			video, ok := id["videoId"].(string)
-			if !ok {
-				return nil, fmt.Errorf(
-					"error in YouTube Data API response from %s. Cannot access items[%d]['videoId']",
-					requestUrl.String(),
-					i,
-				)
-			}
-
-			videoMetadata, err := youtube.GetVideoMetadata(video)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"error in finding metadata for video %s",
-					video,
-				)
-			}
-			result = append(result, videoMetadata)
-		}
-
-		return &VideoList{
-			Count:  len(result),
-			Videos: result,
-		}, nil
+	items, ok := body["items"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf(
+			"error in YouTube Data API response from %s. Key 'items' not found",
+			requestUrl.String(),
+		)
 	}
+	if len(items) == 0 {
+		return &VideoList{}, nil
+	}
+
+	result := []*VideoMetadata{}
+	resultChannel := make(chan *VideoMetadata, len(items))
+
+	for i := 0; i < len(items); i++ {
+		item, ok := items[i].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf(
+				"error in YouTube Data API response from %s. Cannot access items[%d]",
+				requestUrl.String(),
+				i,
+			)
+		}
+
+		id, ok := item["id"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf(
+				"error in YouTube Data API response from %s. Cannot access items[%d]['id']",
+				requestUrl.String(),
+				i,
+			)
+		}
+
+		video, ok := id["videoId"].(string)
+		if !ok {
+			return nil, fmt.Errorf(
+				"error in YouTube Data API response from %s. Cannot access items[%d]['videoId']",
+				requestUrl.String(),
+				i,
+			)
+		}
+
+		go func() {
+			videoMetadata, err := youtube.GetVideoMetadata(video)
+			if err != nil {
+				resultChannel <- nil
+			} else {
+				resultChannel <- videoMetadata
+			}
+		}()
+	}
+
+	for i := 0; i < len(items); i++ {
+		obj := <-resultChannel
+		if obj != nil {
+			result = append(result, obj)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("error in fetching video metadata")
+	}
+
+	slices.SortFunc(result,
+		func(a, b *VideoMetadata) int {
+			timeFormat := "2006-01-02T15:04:05Z"
+			timeA, _ := time.Parse(timeFormat, a.PublishedAt)
+			timeB, _ := time.Parse(timeFormat, b.PublishedAt)
+			if timeA.After(timeB) {
+				return -1
+			} else if timeA.Before(timeB) {
+				return 1
+			} else {
+				return 0
+			}
+		},
+	)
+
+	return &VideoList{
+		Count:  len(result),
+		Videos: result,
+	}, nil
 }

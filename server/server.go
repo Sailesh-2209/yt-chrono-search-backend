@@ -95,7 +95,18 @@ func (server *Server) GetVideos(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	qpPageToken := req.URL.Query().Get("pageToken")
+	qpPublishedAt := req.URL.Query().Get("publishedAt")
+	if qpPublishedAt == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp := make(map[string]string)
+		resp["message"] = "Bad Request. Query parameter 'publishedAt' missing."
+		jsonResp, err := json.Marshal(resp)
+		if err != nil {
+			log.Fatal("Error forming JSON.\n")
+		}
+		w.Write(jsonResp)
+		return
+	}
 
 	loadPrev := false
 	qpLoadPrev := req.URL.Query().Get("loadPrev")
@@ -116,7 +127,7 @@ func (server *Server) GetVideos(w http.ResponseWriter, req *http.Request) {
 	}
 
 	videos, err := server.youtube.GetChannelVideos(
-		qpChannelId, qpVideoId, qpPageToken, loadPrev,
+		qpChannelId, qpVideoId, qpPublishedAt, loadPrev,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
