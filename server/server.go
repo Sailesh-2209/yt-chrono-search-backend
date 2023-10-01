@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"yt_search_server/youtube"
 )
 
@@ -95,39 +94,8 @@ func (server *Server) GetVideos(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	qpPublishedAt := req.URL.Query().Get("publishedAt")
-	if qpPublishedAt == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		resp := make(map[string]string)
-		resp["message"] = "Bad Request. Query parameter 'publishedAt' missing."
-		jsonResp, err := json.Marshal(resp)
-		if err != nil {
-			log.Fatal("Error forming JSON.\n")
-		}
-		w.Write(jsonResp)
-		return
-	}
-
-	loadPrev := false
-	qpLoadPrev := req.URL.Query().Get("loadPrev")
-	if qpLoadPrev == "" || strings.ToLower(qpLoadPrev) == "false" {
-		loadPrev = false
-	} else if strings.ToLower(qpLoadPrev) == "true" {
-		loadPrev = true
-	} else {
-		w.WriteHeader(http.StatusBadRequest)
-		resp := make(map[string]string)
-		resp["message"] = "Bad Request. Invalid value for query parameter 'videoId'. If defined, it must be one of 'true' or 'false'."
-		jsonResp, err := json.Marshal(resp)
-		if err != nil {
-			log.Fatal("Error forming JSON.\n")
-		}
-		w.Write(jsonResp)
-		return
-	}
-
 	videos, err := server.youtube.GetChannelVideos(
-		qpChannelId, qpVideoId, qpPublishedAt, loadPrev,
+		qpChannelId, qpVideoId,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
